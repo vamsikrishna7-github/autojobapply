@@ -5,10 +5,13 @@ from jobspy import scrape_jobs
 from .models import JobPost
 
 def run_job_scraper():
+    # keywords = [
+    #     "Python Django", "React", "Next.js", "JavaScript", 
+    #     "Full-stack Developer", "Frontend Developer", 
+    #     "Backend Developer", "Software Engineer"
+    # ]
     keywords = [
-        "Python Django", "React", "Next.js", "JavaScript", 
-        "Full-stack Developer", "Frontend Developer", 
-        "Backend Developer", "Software Engineer"
+        "Software Engineer"
     ]
     
     email_regex = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'

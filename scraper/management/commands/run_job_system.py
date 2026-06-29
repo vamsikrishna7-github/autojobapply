@@ -9,5 +9,5 @@ class Command(BaseCommand):
         self.stdout.write("Starting JobSpy Scraping Routine...")
         run_job_scraper()
         self.stdout.write("Scraping completed. Initiating direct outreach actions...")
-        auto_apply_via_email()
+        # auto_apply_via_email()
         self.stdout.write("System execution completed successfully.")
