@@ -12,6 +12,7 @@ class JobPost(models.Model):
     # Details & Extraction
     description = models.TextField(blank=True, null=True)
     extracted_email = models.EmailField(blank=True, null=True)
+    company_domain = models.CharField(max_length=253, blank=True, null=True)
     
     # Automation Status tracking
     date_posted = models.DateField(blank=True, null=True)
@@ -20,3 +21,35 @@ class JobPost(models.Model):
 
     def __str__(self):
         return f"{self.title} at {self.company}"
+
+
+class JobContact(models.Model):
+    """A publicly listed contact address associated with a job post."""
+
+    class Source(models.TextChoices):
+        DESCRIPTION = "description", "Job description"
+        JOB_PAGE = "job_page", "Job page"
+
+    class ContactType(models.TextChoices):
+        RECRUITER = "recruiter", "Recruiter"
+        HIRING_MANAGER = "hiring_manager", "Hiring manager"
+        HR = "hr", "HR"
+        COMPANY = "company", "Company contact"
+        OTHER = "other", "Other"
+
+    job = models.ForeignKey(JobPost, on_delete=models.CASCADE, related_name="contacts")
+    email = models.EmailField()
+    source = models.CharField(max_length=20, choices=Source.choices)
+    contact_type = models.CharField(max_length=20, choices=ContactType.choices, default=ContactType.OTHER)
+    confidence = models.PositiveSmallIntegerField(default=0)
+    context = models.CharField(max_length=500, blank=True)
+    discovered_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["job", "email"], name="unique_job_contact_email"),
+        ]
+        ordering = ["-confidence", "email"]
+
+    def __str__(self):
+        return f"{self.email} ({self.contact_type})"

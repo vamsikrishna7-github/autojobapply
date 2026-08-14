@@ -1,23 +1,75 @@
-import re
-import traceback
+import logging
+import os
 from datetime import datetime, date
 from jobspy import scrape_jobs
+from django.db import transaction
 from .models import JobPost
+from .contact_discovery import (
+    discover_contacts,
+    fetch_public_job_page,
+    find_company_domain,
+    merge_candidates,
+)
 
-def run_job_scraper():
-    # keywords = [
-    #     "Python Django", "React", "Next.js", "JavaScript", 
-    #     "Full-stack Developer", "Frontend Developer", 
-    #     "Backend Developer", "Software Engineer"
-    # ]
+logger = logging.getLogger(__name__)
+
+SUPPORTED_SITES = {
+    "linkedin",
+    "indeed",
+    "google",
+    "naukri",
+    "glassdoor",
+    "zip_recruiter",
+    "bayt",
+    "bdjobs",
+}
+# The first four are the JobSpy sources suited to an India-based search. Other
+# JobSpy sources are available through JOB_SITES for their supported regions.
+DEFAULT_SITES = ("linkedin", "indeed", "google", "naukri")
+
+
+def configured_sites() -> list[str]:
+    """Return validated job boards selected through JOB_SITES in .env."""
+    raw_sites = os.getenv("JOB_SITES", ",".join(DEFAULT_SITES))
+    sites = [site.strip().lower() for site in raw_sites.split(",") if site.strip()]
+    invalid_sites = sorted(set(sites) - SUPPORTED_SITES)
+    if invalid_sites:
+        raise ValueError(
+            "Unsupported JOB_SITES value(s): "
+            f"{', '.join(invalid_sites)}. Supported: {', '.join(sorted(SUPPORTED_SITES))}."
+        )
+    return list(dict.fromkeys(sites))
+
+def _save_contacts(job: JobPost, candidates) -> None:
+    """Persist every public address and maintain the legacy best-address field."""
+    for candidate in candidates:
+        job.contacts.update_or_create(
+            email=candidate.email,
+            defaults={
+                "source": candidate.source,
+                "contact_type": candidate.contact_type,
+                "confidence": candidate.confidence,
+                "context": candidate.context,
+            },
+        )
+    best_contact = job.contacts.order_by("-confidence", "email").first()
+    best_email = best_contact.email if best_contact else None
+    if job.extracted_email != best_email:
+        job.extracted_email = best_email
+        job.save(update_fields=["extracted_email"])
+
+
+def run_job_scraper(fetch_job_pages: bool = True):
     keywords = [
-        "Software Engineer"
+        "Python Django", "React", "Next.js", "JavaScript",
+        "Full-stack Developer", "Frontend Developer",
+        "Backend Developer", "Software Engineer"
     ]
+    # keywords = [
+    #     "Software Engineer"
+    # ]
     
-    email_regex = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-
-    # Target platforms sequentially to handle their unique API parameters perfectly
-    target_platforms = ["linkedin", "indeed", "google"]
+    target_platforms = configured_sites()
 
     for site in target_platforms:
         print(f"\n=========================================")
@@ -47,6 +99,10 @@ def run_job_scraper():
                 elif site == "google":
                     # CRITICAL: Google requires 'google_search_term' combined with standard location strings
                     scrape_kwargs["google_search_term"] = f"{query} jobs in India"
+                else:
+                    # Naukri and the optional JobSpy sources use the standard
+                    # search term interface.
+                    scrape_kwargs["search_term"] = query
 
                 # Run Scraper
                 jobs_df = scrape_jobs(**scrape_kwargs)
@@ -59,12 +115,13 @@ def run_job_scraper():
                 for _, row in jobs_df.iterrows():
                     try:
                         job_id = str(row.get('id', ''))
-                        if not job_id or job_id == 'nan' or JobPost.objects.filter(job_id=job_id).exists():
-                            continue 
+                        if not job_id or job_id == 'nan':
+                            logger.warning("Skipping a job without a stable ID from %s", site)
+                            continue
 
                         description = row.get('description', '') or ''
-                        found_emails = re.findall(email_regex, description)
-                        extracted_email = found_emails[0] if found_emails else None
+                        job_url = row.get('job_url', '') or ''
+                        company_domain = find_company_domain(row, job_url)
 
                         # Safe Date Validation
                         posted_date = row.get('date_posted')
@@ -77,20 +134,38 @@ def run_job_scraper():
                             except ValueError:
                                 sanitized_date = None
 
-                        # Save cleanly to your Django DB
-                        JobPost.objects.create(
-                            job_id=job_id,
-                            site=row.get('site', site),
-                            title=row.get('title', 'N/A'),
-                            company=row.get('company', 'N/A'),
-                            location=row.get('location', 'India'),
-                            job_url=row.get('job_url', ''),
-                            description=description,
-                            extracted_email=extracted_email,
-                            date_posted=sanitized_date
-                        )
+                        # update_or_create lets later runs enrich jobs that were saved
+                        # before their description/page exposed a contact address.
+                        with transaction.atomic():
+                            job, _created = JobPost.objects.update_or_create(
+                                job_id=job_id,
+                                defaults={
+                                    "site": row.get('site', site),
+                                    "title": row.get('title', 'N/A'),
+                                    "company": row.get('company', 'N/A'),
+                                    "location": row.get('location', 'India'),
+                                    "job_url": job_url,
+                                    "description": description,
+                                    "company_domain": company_domain,
+                                    "date_posted": sanitized_date,
+                                },
+                            )
+                            description_contacts = discover_contacts(
+                                description,
+                                source="description",
+                                company_domain=company_domain,
+                            )
+                            page_contacts = []
+                            if fetch_job_pages:
+                                page_text = fetch_public_job_page(job_url)
+                                page_contacts = discover_contacts(
+                                    page_text,
+                                    source="job_page",
+                                    company_domain=company_domain,
+                                )
+                            _save_contacts(job, merge_candidates(description_contacts, page_contacts))
                     except Exception as row_err:
-                        pass # Silently proceed over minor single row failures
+                        logger.exception("Could not save or enrich job %r from %s: %s", row.get('id'), site, row_err)
 
                 print(f" Successfully processed batch for '{query}' on {site}.")
 

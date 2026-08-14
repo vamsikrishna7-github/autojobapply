@@ -13,6 +13,10 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 from pathlib import Path
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -82,20 +86,28 @@ WSGI_APPLICATION = 'core.wsgi.application'
 # }
 
 
-# Database Configuration
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'postgres',
-        'USER': 'postgres',
-        'PASSWORD': 'oi6mGgJRqPaulyEo',
-        'HOST': 'db.pmtmznkayqahggyzobmm.supabase.co',
-        'PORT': '5432',
-        'OPTIONS': {
-            'sslmode': 'require',  # Supabase requires SSL
-        },
+# Database Configuration. Set USE_SQLITE=true in .env for a fully local database.
+# Otherwise DB_HOST selects PostgreSQL, and no DB_HOST defaults to SQLite.
+USE_SQLITE = os.getenv("USE_SQLITE", "").strip().lower() in {"1", "true", "yes", "on"}
+if os.getenv('DB_HOST') and not USE_SQLITE:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.getenv('DB_NAME', 'postgres'),
+            'USER': os.getenv('DB_USER', 'postgres'),
+            'PASSWORD': os.getenv('DB_PASSWORD'),
+            'HOST': os.getenv('DB_HOST'),
+            'PORT': os.getenv('DB_PORT', '5432'),
+            'OPTIONS': {'sslmode': os.getenv('DB_SSLMODE', 'require')},
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
@@ -121,10 +133,12 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+# Changed from 'UTC' to Indian Standard Time
+TIME_ZONE = 'Asia/Kolkata'
 
 USE_I18N = True
 
+# Keep this True so Django handles daylight saving and timezone conversions properly
 USE_TZ = True
 
 
@@ -138,6 +152,6 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', 'vamsikrishna.nagidi@gmail.com')
-EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', 'vxkr tooe nzhj quuq')
-DEFAULT_FROM_EMAIL = os.getenv('EMAIL_HOST_USER', 'vamsikrishna.nagidi@gmail.com')
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
